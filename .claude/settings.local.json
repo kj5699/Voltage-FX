@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls ~/.claude/skills/)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(mv 05-PRD.md 01-PRD.md)",
+      "Bash(mv 01-GOALS.md 02-GOALS.md)",
+      "Bash(mv 02-APPROACHES.md 03-APPROACHES.md)",
+      "Bash(mv 03-ARCHITECTURE.md 04-ARCHITECTURE.md)",
+      "Bash(mv 04-TDD-PLAN.md 05-TDD-PLAN.md)"
+    ]
+  }
+}

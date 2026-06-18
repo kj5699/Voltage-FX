@@ -441,3 +441,54 @@ Main Thread
 
 This architecture can handle 50 symbols because computation never touches the main thread,
 and rendering bypasses React's virtual DOM for high-frequency panels.
+
+---
+
+## 13. Web Worker Optimization Strategy (Production Path)
+
+> Full analysis in `docs/06-OPTIMIZATION-PLAN.md`. This section captures the architectural decision.
+
+### What the current architecture leaves on the main thread
+
+The buffer-flush pattern (50/100/200ms intervals) decouples message rate from render rate — React sees at most 20 `setState` calls/second regardless of WebSocket throughput. That problem is solved.
+
+What is **not** solved: at stress rates (orderbook at 10–20ms = 50–100 snapshots/s), `JSON.parse` of 500-level snapshots (~50KB each) consumes **200–300ms/s** of main thread time — up to 30% of total budget, before React even runs.
+
+### Chosen mitigation: Worker for orderbook aggregation only
+
+Move the most expensive operation — orderbook parse + aggregate — to a dedicated Worker. Keep the WebSocket on the main thread (small trade messages don't justify the Worker overhead).
+
+```
+Main thread:
+  WS.onmessage → JSON.parse(raw)
+    → worker.postMessage(ParsedOrderBook)   // 500 levels, raw
+
+Worker thread:
+  aggregateOrderBook(bids, asks, increment, symbol)
+  // sort, prefix-sum, depth bars — all CPU-bound
+    → postMessage(ProcessedOrderBook)        // 20–50 grouped levels
+
+Main thread:
+  store.setOrderBook(result)
+  React renders OrderBookPanel
+```
+
+### Why this split
+
+Structured clone cost is proportional to object size. The raw snapshot (500 levels × 2 sides) is large. The processed result (20–50 grouped levels after aggregation) is 10–25× smaller. Always pay the clone cost on the smaller object — so the Worker returns the result, not the input.
+
+Trade messages (200 bytes each) don't justify a Worker round-trip. The `postMessage` overhead would exceed the parse cost.
+
+### What stays on the main thread permanently
+
+| Layer | Reason |
+|-------|--------|
+| WebSocketManager | Reconnect + heartbeat coordination requires store access |
+| Trade parse + aggregate | Tiny payloads — Worker overhead > benefit |
+| Ticker parse + merge | Same — 200ms flush, negligible CPU |
+| Zustand store writes | Workers have no DOM/store access |
+| React render | DOM only — always main thread |
+
+### Implementation: Issue 20
+
+See `issues/20-orderbook-worker.md`. Not implemented in the current version — the buffer-flush architecture handles the assignment's evaluation criteria. This is the documented next step for production load.

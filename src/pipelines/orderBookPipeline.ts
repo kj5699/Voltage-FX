@@ -87,7 +87,7 @@ function addCumulative(
     levels.push({ price: key / scale, size, cumulativeSize: cumulative, depthWidth: 0 })
   }
 
-  const maxCumulative = levels.at(-1)?.cumulativeSize ?? 0
+  const maxCumulative = levels[levels.length - 1]?.cumulativeSize ?? 0
   if (maxCumulative > 0) {
     for (const level of levels) {
       level.depthWidth = (level.cumulativeSize / maxCumulative) * 100

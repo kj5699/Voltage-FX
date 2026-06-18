@@ -135,8 +135,9 @@ export class WebSocketManager {
     }, PING_INTERVAL_MS)
 
     // Clear pong timer when a pong arrives
-    const originalOnMessage = this.ws!.onmessage
-    this.ws!.onmessage = (event: MessageEvent) => {
+    const capturedWs = this.ws!
+    const originalOnMessage = capturedWs.onmessage
+    capturedWs.onmessage = (event: MessageEvent) => {
       let msg: unknown
       try { msg = JSON.parse(event.data as string) } catch { /* ignore */ }
       if (typeof msg === 'object' && msg !== null && (msg as Record<string, unknown>)['type'] === 'pong') {
@@ -146,7 +147,7 @@ export class WebSocketManager {
         }
         return
       }
-      originalOnMessage?.call(this.ws, event)
+      originalOnMessage?.call(capturedWs, event)
     }
   }
 

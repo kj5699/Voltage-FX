@@ -1,0 +1,1 @@
+export { useTickerBar } from './useTickerBar'

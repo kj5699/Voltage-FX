@@ -1,7 +1,12 @@
+import { TickerBar } from '@components/TickerBar'
+
 function App() {
   return (
-    <div style={{ padding: '2rem', color: 'var(--color-text-secondary)' }}>
-      Delta Exchange Trading Dashboard — scaffold ready
+    <div className="app">
+      <TickerBar />
+      <main style={{ padding: '1rem', color: 'var(--color-text-secondary)' }}>
+        Order book and trades panels coming soon.
+      </main>
     </div>
   )
 }

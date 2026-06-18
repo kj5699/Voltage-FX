@@ -41,6 +41,7 @@ export function useTradesFlush(notionalThreshold: number): void {
       if (useStore.getState().focusSeqId !== capturedSeqId) return // stale guard
 
       bufferRef.current = []
+      const t0 = performance.now()
       const current = useStore.getState().trades as AggregatedTrade[]
       const merged = aggregateTrades(buffer, current, notionalRef.current)
 
@@ -48,6 +49,11 @@ export function useTradesFlush(notionalThreshold: number): void {
       const stats = computeRollingStats(rollingDequeRef.current)
 
       useStore.getState().setTrades(merged, stats)
+
+      if (import.meta.env.DEV) {
+        const elapsed = performance.now() - t0
+        if (elapsed > 3) console.warn(`[Trades flush] ${elapsed.toFixed(2)}ms — budget 3ms`)
+      }
     }, FLUSH_MS)
 
     return () => {

@@ -40,6 +40,7 @@ export function useOrderBookFlush(
       if (!parsed) return
       if (useStore.getState().focusSeqId !== capturedSeqId) return // stale guard
 
+      const t0 = performance.now()
       const increment = useStore.getState().groupingIncrement
       const result = aggregateOrderBook(parsed.bids, parsed.asks, increment, symbol)
 
@@ -53,6 +54,11 @@ export function useOrderBookFlush(
 
       if (bidFlashes.size > 0 || askFlashes.size > 0) {
         onFlash(bidFlashes, askFlashes)
+      }
+
+      if (import.meta.env.DEV) {
+        const elapsed = performance.now() - t0
+        if (elapsed > 2) console.warn(`[OB flush] ${elapsed.toFixed(2)}ms — budget 2ms`)
       }
     }, FLUSH_MS)
 

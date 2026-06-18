@@ -26,6 +26,10 @@ body {
   font-size: 13px;
 }
 
+/* ── Layout ──────────────────────────────────────────────── */
+.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.app__panels { display: flex; flex: 1; overflow: hidden; }
+
 /* ── Ticker Bar ──────────────────────────────────────────── */
 .ticker-bar {
   display: flex;
@@ -60,3 +64,105 @@ body {
 .ticker-cell__change { font-size: 11px; }
 .ticker-cell__change--positive { color: var(--color-buy); }
 .ticker-cell__change--negative { color: var(--color-sell); }
+
+/* ── Order Book Panel ────────────────────────────────────── */
+.ob-panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-panel);
+  border-right: 1px solid var(--color-border);
+  width: 300px;
+  min-width: 240px;
+  overflow-y: auto;
+}
+.ob-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  background-color: var(--color-bg-panel);
+  z-index: 1;
+}
+.ob-panel__title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+
+.ob-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.ob-table th {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  padding: 2px 6px;
+  text-align: right;
+  font-weight: 400;
+}
+.ob-table th:first-child { width: 40%; padding: 0; }
+.ob-table th:nth-child(2) { width: 20%; }
+.ob-table th:nth-child(3) { width: 20%; }
+.ob-table th:last-child { width: 20%; }
+
+.ob-row { height: 22px; position: relative; }
+.ob-row td { padding: 0 6px; font-size: 12px; text-align: right; }
+.ob-row__depth-cell { padding: 0 !important; position: relative; }
+.ob-row__depth-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0.15;
+  transition: width 0.15s ease-out;
+}
+.ob-row__depth-bar--ask { background-color: var(--color-sell); right: 0; }
+.ob-row__depth-bar--bid { background-color: var(--color-buy); right: 0; }
+.ob-row--ask .ob-row__price { color: var(--color-sell); }
+.ob-row--bid .ob-row__price { color: var(--color-buy); }
+
+/* Flash highlights — applied via DOM class, not React state */
+@keyframes flash-green-anim { 0% { background-color: rgba(38,166,154,0.35); } 100% { background-color: transparent; } }
+@keyframes flash-red-anim { 0% { background-color: rgba(239,83,80,0.35); } 100% { background-color: transparent; } }
+.flash-green { animation: flash-green-anim 0.4s ease-out forwards; }
+.flash-red { animation: flash-red-anim 0.4s ease-out forwards; }
+
+/* Spread bar */
+.spread-bar {
+  display: flex;
+  gap: 16px;
+  padding: 4px 12px;
+  background-color: var(--color-bg-secondary);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+.spread-bar__item { display: flex; flex-direction: column; align-items: center; }
+.spread-bar__label { font-size: 9px; color: var(--color-text-muted); text-transform: uppercase; }
+.spread-bar__value { font-size: 11px; font-weight: 600; }
+.spread-bar__value--buy { color: var(--color-buy); }
+.spread-bar__value--sell { color: var(--color-sell); }
+
+/* Grouping selector */
+.grouping-selector { display: flex; align-items: center; gap: 6px; }
+.grouping-selector__label { font-size: 10px; color: var(--color-text-muted); }
+.grouping-selector__select {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* Skeleton */
+.ob-skeleton { padding: 8px; }
+.ob-skeleton__row {
+  height: 20px;
+  background: linear-gradient(90deg, var(--color-bg-row) 25%, var(--color-bg-panel) 50%, var(--color-bg-row) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 2px;
+  margin-bottom: 4px;
+}
+@keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }

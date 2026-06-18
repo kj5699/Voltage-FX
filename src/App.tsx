@@ -1,12 +1,16 @@
 import { TickerBar } from '@components/TickerBar'
+import { OrderBookPanel } from '@components/OrderBook'
 
 function App() {
   return (
     <div className="app">
       <TickerBar />
-      <main style={{ padding: '1rem', color: 'var(--color-text-secondary)' }}>
-        Order book and trades panels coming soon.
-      </main>
+      <div className="app__panels">
+        <OrderBookPanel />
+        <main style={{ flex: 1, padding: '1rem', color: 'var(--color-text-secondary)' }}>
+          Trades feed coming soon.
+        </main>
+      </div>
     </div>
   )
 }

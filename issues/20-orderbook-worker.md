@@ -1,7 +1,7 @@
-# Issue 20 — Web Worker: Orderbook Aggregation Pipeline Off Main Thread
+# Issue 20 — Web Worker: All Pipelines Off Main Thread
 
 **Type:** AFK
-**Blocked by:** Issue 06 (orderBookPipeline must exist and be pure), Issue 11 (store)
+**Blocked by:** Issue 06 (pipelines must exist and be pure), Issue 11 (store)
 **Priority:** Production optimization — not required for assignment evaluation
 
 ---
@@ -10,128 +10,171 @@
 
 At stress rates (backend cranked to `l2_orderbook: {min:10, max:20}`), the backend pushes
 **50–100 orderbook snapshots/second**, each carrying 500 bid + 500 ask levels (~30–50KB JSON).
+Trades arrive at **200–1000/s**.
 
-Profiling breakdown:
-- `JSON.parse` of 50KB ≈ 2–3ms per message
-- At 100 snapshots/s → **200–300ms/s** of main thread consumed on parse alone
-- Aggregation pipeline (sort + prefix-sum + depth bars) adds ~1–2ms per 50ms flush
+Profiling breakdown at extreme rates:
+- `JSON.parse` of 50KB orderbook ≈ 2–3ms per message → **200–300ms/s** on main thread
+- Orderbook aggregation per 50ms flush → ~2ms per flush → **40ms/s**
+- Trade JSON.parse at 1000/s → ~50ms/s on main thread
+- Total: ~300ms/s+ competing with React layout and paint
 
-The main thread has ~850ms/s available after React's own budget. Orderbook work alone at
-extreme rates can consume 25–35% of that, causing visible jank in React renders.
-
-The buffer-flush pattern (50ms flush) already ensures React only reconciles ~20×/s.
+The buffer-flush pattern (Issues 06–10) already decouples message rate from render rate.
 This issue addresses the CPU cost during each flush — not the render count.
 
 ## What to build
 
-A dedicated `orderBookWorker` that owns the orderbook aggregation pipeline.
-The WebSocket and all other pipelines stay on the main thread.
+Move **all four aggregation pipelines** to a single Worker. The WebSocket stays on the
+main thread (low CPU cost, owns reconnect + subscription registry). The main thread
+becomes a dumb router: buffer raw strings → postMessage → receive results → store.set.
 
 ### Architecture
 
 ```
 Main thread
-  WS.onmessage (l2_orderbook)
-    → parseOrderBookMessage(raw)           // JSON.parse + type conversion
-    → orderBookBuffer.current = parsed     // overwrite — only latest matters
-    [50ms flush timer fires]
-    → worker.postMessage(ParsedOrderBook)  // send 500-level parsed data
+  WS.onmessage
+    → push raw message string to buffer  // near zero CPU
 
-Worker thread (src/workers/orderBookWorker.ts)
+  [flush timers fire — every 50/100/200ms]
+    → collect buffered raw strings
+    → worker.postMessage({ rawOrderBook, rawTrades, rawTickers, increment, symbol, seqId })
+
+Worker thread (src/workers/pipelineWorker.ts)
   self.onmessage = ({ data }) => {
-    const result = aggregateOrderBook(
-      data.bids, data.asks, data.increment, data.symbol
-    )
-    self.postMessage(result)               // send back 20–50 grouped levels
+    const parsed = JSON.parse each raw string
+    const orderBook = aggregateOrderBook(...)
+    const { trades, rollingStats } = aggregateTrades(...)
+    const tickers = mergeLatestTickers(...)
+    self.postMessage({ orderBook, trades, rollingStats, tickers, seqId: data.seqId })
   }
 
 Main thread
-  worker.onmessage = ({ data: ProcessedOrderBook }) => {
-    if (capturedSeqId !== store.focusSeqId) return  // stale-snapshot guard
-    store.setOrderBook(data)
+  worker.onmessage = ({ data }) => {
+    if (data.seqId !== store.getState().focusSeqId) return  // stale guard
+    store.setOrderBook(data.orderBook)
+    store.setTrades(data.trades, data.rollingStats)
+    store.updateTickers(data.tickers)
   }
 ```
 
-### Why this split (not moving WS to Worker)
+### Why all four pipelines (not just orderbook)
 
-- Structured clone cost scales with object size
-- Input (ParsedOrderBook): 500+500 levels — relatively large
-- Output (ProcessedOrderBook): 20–50 grouped levels — 10–25× smaller
-- Always pay the clone tax on the smaller object → Worker returns result, not input
-- Trade messages (~200 bytes) don't justify Worker overhead — cost exceeds benefit
-- WebSocket on main thread keeps reconnect + subscription registry simple
+Option B (OB only) vs Option C (all pipelines) requires the same Worker bridge complexity —
+same `postMessage`, same stale guard, same Worker lifecycle. Option C just adds more function
+calls inside the Worker's `onmessage` handler. The benefit is much larger:
 
-### Files to create/modify
+| | Main thread/second |
+|---|---|
+| Status quo (no Worker) | ~350ms |
+| Worker for OB only | ~100ms |
+| Worker for all pipelines | ~10ms |
 
-**`src/workers/orderBookWorker.ts`** — new file
+See `docs/07-WORKER-TRADEOFF.md` for full analysis.
+
+### Wire format (Main → Worker, every flush cycle)
+
 ```typescript
-import { aggregateOrderBook } from '@pipelines/orderBookPipeline'
-import type { ParsedOrderBook } from '@pipelines/parsers'
-import type { Symbol } from '@config/symbols'
-
 interface WorkerInput {
-  bids: ParsedOrderBook['bids']
-  asks: ParsedOrderBook['asks']
-  increment: number
+  seqId: number                  // focusSeqId at dispatch time
   symbol: Symbol
-}
-
-self.onmessage = (e: MessageEvent<WorkerInput>) => {
-  const { bids, asks, increment, symbol } = e.data
-  const result = aggregateOrderBook(bids, asks, increment, symbol)
-  self.postMessage(result)
+  increment: number
+  rawOrderBook: string | null    // latest raw JSON string from WS buffer
+  rawTrades: string[]            // all raw trade strings from last 100ms
+  rawTickers: string[]           // all raw ticker strings from last 200ms
 }
 ```
 
-**`src/hooks/useOrderBookFlush.ts`** — modify flush handler
-- Replace synchronous `aggregateOrderBook()` call with `worker.postMessage()`
-- Worker instance created once, reused across flushes
-- On symbol change (focusSeqId change): worker stays alive, stale-guard handles discard
+### Wire format (Worker → Main, per flush)
+
+```typescript
+interface WorkerOutput {
+  seqId: number
+  orderBook: ProcessedOrderBook | null
+  trades: AggregatedTrade[]
+  rollingStats: RollingStats | null
+  tickers: Partial<Record<Symbol, ParsedTicker>>
+}
+```
+
+Transferring raw strings (cheap — strings are transferable by reference or near-zero copy).
+Receiving a compact result (~20 grouped OB levels, 5 trade rows, 6 ticker objects) — tiny.
+
+### Files to create/modify
+
+**`src/workers/pipelineWorker.ts`** — new file
+```typescript
+import { parseOrderBookMessage, parseTradeMessage, parseTickerMessage } from '@pipelines/parsers'
+import { aggregateOrderBook } from '@pipelines/orderBookPipeline'
+import { aggregateTrades } from '@pipelines/tradePipeline'
+import { updateRollingDeque, computeRollingStats } from '@pipelines/rollingStatsPipeline'
+import { mergeLatestTickers } from '@pipelines/tickerPipeline'
+
+let rollingDeque: ReturnType<typeof updateRollingDeque> = []
+
+self.onmessage = (e: MessageEvent<WorkerInput>) => {
+  const { seqId, symbol, increment, rawOrderBook, rawTrades, rawTickers } = e.data
+
+  const orderBook = rawOrderBook
+    ? aggregateOrderBook(
+        ...parseOrderBookMessage(JSON.parse(rawOrderBook)).bids,
+        increment, symbol
+      )
+    : null
+
+  const parsedTrades = rawTrades.map(r => parseTradeMessage(JSON.parse(r)))
+  rollingDeque = updateRollingDeque(rollingDeque, parsedTrades, Date.now())
+  const { trades, rollingStats } = aggregateTrades(parsedTrades)
+
+  const parsedTickers = rawTickers.map(r => parseTickerMessage(JSON.parse(r)))
+  const tickers = mergeLatestTickers(parsedTickers)
+
+  self.postMessage({ seqId, orderBook, trades, rollingStats, tickers })
+}
+```
+
+**`src/hooks/usePipelineFlush.ts`** — replaces the three separate flush hooks
+- Creates one Worker instance on mount
+- Three flush intervals (50ms OB, 100ms trades, 200ms tickers) still exist but only
+  batch raw strings and call `worker.postMessage`
+- Worker result handler does the single `store.set` call
+- Captures `focusSeqId` on dispatch; Worker echoes it back; stale guard on receipt
 
 **`vite.config.ts`** — no change needed
-Vite handles Worker imports via `new URL('../workers/orderBookWorker.ts', import.meta.url)` natively.
+Vite handles Worker imports via `new URL('../workers/pipelineWorker.ts', import.meta.url)` natively.
 
 ## Acceptance criteria
 
-- [ ] `aggregateOrderBook` runs in Worker thread (verified via Chrome DevTools Performance → flame chart shows it off main thread)
-- [ ] Main thread shows no `aggregateOrderBook` call in flame chart during orderbook updates
-- [ ] `stale-snapshot guard` still applies: Worker results arriving after symbol switch are discarded
-- [ ] Worker survives symbol switch without being recreated (single instance, stale guard handles cleanup)
+- [ ] All pipeline computation runs in Worker thread (verified via Chrome DevTools Performance → flame chart)
+- [ ] Main thread shows no `aggregateOrderBook`, `aggregateTrades`, `JSON.parse` (large payloads) in flame chart
+- [ ] `stale-snapshot guard` works: Worker results after symbol switch are discarded
+- [ ] Worker survives symbol switch without being recreated (single instance per app lifetime)
 - [ ] `npm run build` passes — Vite bundles worker correctly
-- [ ] All existing orderbook pipeline tests still pass (pure function, no Worker dependency)
-- [ ] React render time for OrderBookPanel unchanged or improved under stress
+- [ ] All existing pipeline tests pass unchanged (pure functions, no Worker dependency)
+- [ ] React render times for all panels unchanged or improved under stress
 
 ## Performance target
 
 | Metric | Before | After |
 |--------|--------|-------|
-| Main thread during OB flush | ~2–3ms | <0.5ms |
-| Worker thread during OB flush | — | ~1–2ms (doesn't block main) |
-| React frame budget reclaimed | — | 1.5–2.5ms/flush |
+| Main thread used/second | ~350ms | <10ms |
+| React frame budget | ~500ms | ~840ms |
+| Worker thread | — | ~300ms (doesn't block main) |
 
 ## Testing scope
 
-- Existing `orderBookPipeline.test.ts` tests unchanged (pipeline is pure — no Worker dependency)
-- New integration test: verify Worker receives correct input shape and returns ProcessedOrderBook
+- Existing pipeline tests unchanged — pipelines are pure, no Worker dependency
+- New integration test: verify Worker receives correct input shape and returns correct output
 - Manual: Chrome DevTools Performance trace under stress — confirm main thread clean
 
 ## Why not implemented now
 
-The buffer-flush architecture with 50ms flush timer already ensures React sees at most
-20 orderbook renders/second. Under the assignment's evaluation conditions this is
-sufficient for a responsive UI.
+The buffer-flush architecture already ensures React sees at most 20 renders/second. Under
+the assignment's evaluation conditions this is sufficient for a responsive UI.
 
-The Worker becomes necessary when:
-1. Flush interval cannot be increased further (already at minimum useful value)
-2. `JSON.parse` + aggregation demonstrably blocks React frames (measure first)
-3. Load exceeds ~50 orderbook snapshots/second sustained
-
-Measure with `performance.now()` marks inside the flush handler before optimizing.
-Premature Worker adoption adds real complexity (message bridge, stale-guard complexity,
-Worker lifecycle) without guaranteed benefit.
+Measure with `performance.now()` marks inside flush handlers before optimizing.
 
 ## Reference
 
 - Full analysis: `docs/06-OPTIMIZATION-PLAN.md`
+- Tradeoff comparison: `docs/07-WORKER-TRADEOFF.md`
 - Architecture decision: `docs/04-ARCHITECTURE.md §13`
-- Pure pipeline (no changes needed): `src/pipelines/orderBookPipeline.ts`
+- Pure pipelines (no changes needed): `src/pipelines/`

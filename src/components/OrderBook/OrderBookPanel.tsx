@@ -77,7 +77,6 @@ export function OrderBookPanel() {
       <table className="ob-table ob-table--asks" aria-label="Ask orders">
         <thead>
           <tr>
-            <th className="ob-row__depth-cell" />
             <th>Price</th>
             <th>Size</th>
             <th>Total</th>
@@ -101,7 +100,6 @@ export function OrderBookPanel() {
       <table className="ob-table ob-table--bids" aria-label="Bid orders">
         <thead>
           <tr>
-            <th className="ob-row__depth-cell" />
             <th>Price</th>
             <th>Size</th>
             <th>Total</th>

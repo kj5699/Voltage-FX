@@ -69,7 +69,7 @@ describe('T5-6: asks rendered in ascending price order', () => {
     render(<OrderBookPanel />)
     const askTable = screen.getByRole('table', { name: /ask orders/i })
     const rows = askTable.querySelectorAll('tbody tr')
-    const prices = Array.from(rows).map((r) => r.querySelectorAll('td')[1]?.textContent)
+    const prices = Array.from(rows).map((r) => r.querySelectorAll('td')[0]?.textContent)
     expect(prices[0]).toBe('62570.0') // lowest ask first
     expect(prices[1]).toBe('62580.0')
   })
@@ -82,7 +82,7 @@ describe('T5-7: bids rendered in descending price order', () => {
     render(<OrderBookPanel />)
     const bidTable = screen.getByRole('table', { name: /bid orders/i })
     const rows = bidTable.querySelectorAll('tbody tr')
-    const prices = Array.from(rows).map((r) => r.querySelectorAll('td')[1]?.textContent)
+    const prices = Array.from(rows).map((r) => r.querySelectorAll('td')[0]?.textContent)
     expect(prices[0]).toBe('62560.0') // highest bid first
     expect(prices[1]).toBe('62550.0')
   })

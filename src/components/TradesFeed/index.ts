@@ -1,0 +1,1 @@
+export { TradesFeedPanel } from './TradesFeedPanel'

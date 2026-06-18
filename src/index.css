@@ -166,3 +166,89 @@ body {
   margin-bottom: 4px;
 }
 @keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── Trades Feed Panel ───────────────────────────────────── */
+.trades-panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-panel);
+  flex: 1;
+  overflow: hidden;
+}
+.trades-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  gap: 8px;
+}
+.trades-panel__title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+.trades-panel__threshold { display: flex; align-items: center; gap: 4px; }
+.trades-panel__threshold-label { font-size: 10px; color: var(--color-text-muted); }
+.trades-panel__threshold-input {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  width: 80px;
+}
+.trades-panel__col-header {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  padding: 2px 12px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.trade-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.trade-row--buy { color: var(--color-buy); }
+.trade-row--sell { color: var(--color-sell); }
+.trade-row--large { font-weight: 700; background-color: rgba(255,255,255,0.03); }
+.trade-row__time { color: var(--color-text-muted); font-size: 10px; min-width: 80px; }
+.trade-row__price { min-width: 70px; text-align: right; }
+.trade-row__size { min-width: 60px; text-align: right; }
+.trade-row__count { font-size: 10px; color: var(--color-text-muted); }
+
+.jump-to-latest {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.9;
+  z-index: 10;
+}
+.jump-to-latest:hover { opacity: 1; }
+
+/* Rolling stats bar */
+.rolling-stats {
+  display: flex;
+  gap: 16px;
+  padding: 4px 12px;
+  background-color: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+.rolling-stats__item { display: flex; flex-direction: column; align-items: center; }
+.rolling-stats__label { font-size: 9px; color: var(--color-text-muted); text-transform: uppercase; }
+.rolling-stats__value { font-size: 11px; font-weight: 600; }
+.rolling-stats__value--buy { color: var(--color-buy); }
+.rolling-stats__value--sell { color: var(--color-sell); }

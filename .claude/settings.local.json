@@ -22,7 +22,8 @@
       "Bash(curl -s http://localhost:3000/intervals)",
       "Bash(curl -s -X POST http://localhost:3000/intervals -H 'Content-Type: application/json' -d '{\"all_trades\": {\"min\": 5, \"max\": 20}, \"l2_orderbook\": {\"min\": 10, \"max\": 40}}')",
       "Bash(npm uninstall *)",
-      "Bash(git -C /Users/jatinkhemchandani/delta-exchange-assignment add -A)"
+      "Bash(git -C /Users/jatinkhemchandani/delta-exchange-assignment add -A)",
+      "Bash(git -C /Users/jatinkhemchandani/delta-exchange-assignment commit -m ' *)"
     ]
   }
 }

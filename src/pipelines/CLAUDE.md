@@ -10,10 +10,10 @@ These are backend wire format facts — not assumptions. Get them wrong and the 
 
 | Raw field | What to do |
 |-----------|-----------|
-| `bids/asks: [price, size][]` | Destructure each tuple: `const [price, size] = level` |
+| `bids/asks: [price, size][]` | Destructure each tuple: `const [price, size] = level` — values are **strings**, call `parseFloat()` |
 | `timestamp` in microseconds | `timestampMs = timestamp / 1000` before any date or bucket math |
 | No `side` field on trades | `buyer_role === 'taker'` → `'buy'`; `seller_role === 'taker'` → `'sell'` |
-| `ltp_change_24h` is a multiplier | `change24h = (ltp_change_24h - 1) * 100`; last price = `close` |
+| `ltp_change_24h` is a **string** multiplier | `change24h = (parseFloat(ltp_change_24h) - 1) * 100`; last price = `close` (number) |
 
 ## Symbol precision table (from backend config.js — do not guess)
 

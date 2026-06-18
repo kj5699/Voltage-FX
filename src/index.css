@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg-primary: #0d0f14;
+  --color-bg-secondary: #13161e;
+  --color-bg-panel: #1a1d27;
+  --color-bg-row: #1e2130;
+  --color-border: #2a2d3a;
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #8892a4;
+  --color-text-muted: #4a5568;
+  --color-buy: #26a69a;
+  --color-sell: #ef5350;
+  --color-accent: #3b82f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13px;
+}

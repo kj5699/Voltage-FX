@@ -13,9 +13,11 @@ Read these before touching any data-handling code. Getting these wrong causes si
 | Fact | What it means in code |
 |------|----------------------|
 | Orderbook `bids`/`asks` are `[price, size][]` tuples | Destructure: `const [price, size] = level` — never `.price`/`.size` |
+| Tuple values are **strings**, not numbers | `parseFloat(price)` and `parseFloat(size)` — the wire sends `["62560.9","3.7315"]` |
 | All timestamps are **microseconds** | Divide by 1000 before any ms arithmetic. Bucket math: `Math.floor(timestampMs / 100)` |
 | Trades have no `side` field | Derive: `buyer_role === 'taker'` → `'buy'`, `seller_role === 'taker'` → `'sell'` |
-| `ltp_change_24h` is a multiplier | `(ltp_change_24h - 1) * 100` gives percentage. Last price = `close` field. |
+| `ltp_change_24h` is a **string** multiplier | `parseFloat(ltp_change_24h)` then `(val - 1) * 100` gives percentage. Last price = `close` field (number). |
+| Top-level `type` field, not `channel` | Messages use `msg.type` for routing: `'l2_orderbook'`, `'all_trades'`, `'v2/ticker'` |
 
 ## Symbol precision (must match backend config.js exactly)
 

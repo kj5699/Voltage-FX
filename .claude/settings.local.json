@@ -7,7 +7,22 @@
       "Bash(mv 01-GOALS.md 02-GOALS.md)",
       "Bash(mv 02-APPROACHES.md 03-APPROACHES.md)",
       "Bash(mv 03-ARCHITECTURE.md 04-ARCHITECTURE.md)",
-      "Bash(mv 04-TDD-PLAN.md 05-TDD-PLAN.md)"
+      "Bash(mv 04-TDD-PLAN.md 05-TDD-PLAN.md)",
+      "Bash(git -C /Users/jatinkhemchandani/delta-exchange-assignment status)",
+      "Bash(git checkout *)",
+      "Bash(bun --version)",
+      "Bash(npm --version)",
+      "Bash(ls /tmp/socket-custom-load 2>/dev/null || echo \"not cloned yet\")",
+      "Bash(docker --version)",
+      "Bash(npm install *)",
+      "Bash(node /tmp/socket-custom-load/index.js)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -X POST http://localhost:3000/intervals -H 'Content-Type: application/json' -d '{\"all_trades\": {\"min\": 1, \"max\": 5}}')",
+      "Bash(curl -s http://localhost:3000/intervals)",
+      "Bash(curl -s -X POST http://localhost:3000/intervals -H 'Content-Type: application/json' -d '{\"all_trades\": {\"min\": 5, \"max\": 20}, \"l2_orderbook\": {\"min\": 10, \"max\": 40}}')",
+      "Bash(npm uninstall *)",
+      "Bash(git -C /Users/jatinkhemchandani/delta-exchange-assignment add -A)"
     ]
   }
 }

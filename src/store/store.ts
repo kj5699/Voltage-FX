@@ -55,9 +55,12 @@ export const useStore = create<AppStore>((set) => ({
   setFocusedSymbol: (s) => set((state) => {
     try { localStorage.setItem(LS_KEY, s) } catch { /* ignore */ }
     return {
-      focusSeqId: state.focusSeqId + 1,
+      focusSeqId: state.focusSeqId + 1,       // FIRST — invalidates in-flight flushes
       focusedSymbol: s,
       groupingIncrement: SYMBOL_CONFIG[s].increments[0] ?? 1,
+      orderBook: null,                         // step 4 — clear stale display immediately
+      trades: [],
+      rollingStats: null,
     }
   }),
 

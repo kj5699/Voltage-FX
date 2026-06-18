@@ -4,12 +4,15 @@ import { parseTradeMessage } from '@pipelines/parsers'
 import { aggregateTrades } from '@pipelines/tradePipeline'
 import { updateRollingDeque, computeRollingStats } from '@pipelines/rollingStatsPipeline'
 import { useStore } from '@store/store'
+import { useFocusedSymbol } from '@store/index'
 import type { ParsedTrade } from '@pipelines/parsers'
 import type { AggregatedTrade } from '@pipelines/tradePipeline'
+import type { Symbol } from '@config/symbols'
 
 const FLUSH_MS = 100
 
 export function useTradesFlush(notionalThreshold: number): void {
+  const focusedSymbol = useFocusedSymbol()
   const bufferRef = useRef<ParsedTrade[]>([])
   const notionalRef = useRef(notionalThreshold)
   const rollingDequeRef = useRef<ParsedTrade[]>([])
@@ -18,20 +21,24 @@ export function useTradesFlush(notionalThreshold: number): void {
   notionalRef.current = notionalThreshold
 
   useEffect(() => {
-    const store = useStore.getState()
-    const capturedSeqId = store.focusSeqId
-    const symbol = store.focusedSymbol
+    const capturedSeqId = useStore.getState().focusSeqId
+    const symbol: Symbol = focusedSymbol
+
+    // Step 6 — clear trades buffer before subscribing new symbol
+    bufferRef.current = []
+    rollingDequeRef.current = []
 
     const handler = (msg: unknown) => {
       bufferRef.current.push(parseTradeMessage(msg as Record<string, unknown>))
     }
 
+    // Step 10 — subscribe new symbol
     wsManager.subscribe('all_trades', symbol, handler)
 
     const intervalId = setInterval(() => {
       const buffer = bufferRef.current
       if (buffer.length === 0) return
-      if (useStore.getState().focusSeqId !== capturedSeqId) return
+      if (useStore.getState().focusSeqId !== capturedSeqId) return // stale guard
 
       bufferRef.current = []
       const current = useStore.getState().trades as AggregatedTrade[]
@@ -45,9 +52,8 @@ export function useTradesFlush(notionalThreshold: number): void {
 
     return () => {
       clearInterval(intervalId)
+      // Step 3 — unsubscribe old symbol
       wsManager.unsubscribe('all_trades', symbol)
-      bufferRef.current = []
-      rollingDequeRef.current = []
     }
-  }, []) // intentionally stable — symbol tracked via capturedSeqId
+  }, [focusedSymbol]) // re-runs on symbol change
 }

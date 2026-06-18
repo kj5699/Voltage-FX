@@ -30,6 +30,30 @@ body {
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .app__panels { display: flex; flex: 1; overflow: hidden; }
 
+/* ── Connection Status ───────────────────────────────────── */
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.connection-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.connection-dot--connected { background-color: var(--color-buy); }
+.connection-dot--connecting { background-color: var(--color-text-muted); }
+.connection-dot--reconnecting {
+  background-color: #f59e0b;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.connection-dot--disconnected { background-color: var(--color-sell); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
 /* ── Ticker Bar ──────────────────────────────────────────── */
 .ticker-bar {
   display: flex;

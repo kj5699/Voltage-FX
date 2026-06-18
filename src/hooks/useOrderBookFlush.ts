@@ -4,29 +4,36 @@ import { parseOrderBookMessage } from '@pipelines/parsers'
 import { aggregateOrderBook } from '@pipelines/orderBookPipeline'
 import { buildSizeMap, detectFlashes } from '@utils/detectFlashes'
 import { useStore } from '@store/store'
+import { useFocusedSymbol } from '@store/index'
 import type { ParsedOrderBook } from '@pipelines/parsers'
 import type { FlashResult } from '@utils/detectFlashes'
+import type { Symbol } from '@config/symbols'
 
 const FLUSH_MS = 50
 
 export function useOrderBookFlush(
   onFlash: (bids: FlashResult, asks: FlashResult) => void,
 ): void {
+  const focusedSymbol = useFocusedSymbol()
   const bufferRef = useRef<ParsedOrderBook | null>(null)
   const prevBidSizeMap = useRef<Map<number, number>>(new Map())
   const prevAskSizeMap = useRef<Map<number, number>>(new Map())
 
   useEffect(() => {
-    const store = useStore.getState()
-    const capturedSeqId = store.focusSeqId
-    const symbol = store.focusedSymbol
+    const capturedSeqId = useStore.getState().focusSeqId
+    const symbol: Symbol = focusedSymbol
+
+    // Steps 5 — clear buffer before subscribing new symbol
+    bufferRef.current = null
+    prevBidSizeMap.current = new Map()
+    prevAskSizeMap.current = new Map()
 
     const handler = (msg: unknown) => {
       bufferRef.current = parseOrderBookMessage(msg as Record<string, unknown>)
     }
 
+    // Step 9 — subscribe new symbol
     wsManager.subscribe('l2_orderbook', symbol, handler)
-    useStore.getState().setOrderBook(null)
 
     const intervalId = setInterval(() => {
       const parsed = bufferRef.current
@@ -51,10 +58,8 @@ export function useOrderBookFlush(
 
     return () => {
       clearInterval(intervalId)
+      // Step 2 — unsubscribe old symbol
       wsManager.unsubscribe('l2_orderbook', symbol)
-      prevBidSizeMap.current = new Map()
-      prevAskSizeMap.current = new Map()
-      bufferRef.current = null
     }
-  }, [onFlash])
+  }, [focusedSymbol, onFlash]) // re-runs on symbol change
 }

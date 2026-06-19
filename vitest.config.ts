@@ -11,6 +11,7 @@ export default defineConfig({
       tsconfig: './tsconfig.test.json',
     },
     setupFiles: ['./src/test/setup.ts'],
+    exclude: ['scripts/**', 'node_modules/**', 'dist/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
@@ -38,6 +39,7 @@ export default defineConfig({
       '@components': resolve(__dirname, 'src/components'),
       '@config': resolve(__dirname, 'src/config'),
       '@utils': resolve(__dirname, 'src/utils'),
+      '@workers': resolve(__dirname, 'src/workers'),
     },
   },
 })

@@ -10,7 +10,17 @@ vi.mock('@ws/index', () => ({
   wsManager: {
     subscribe: vi.fn(),
     unsubscribe: vi.fn(),
+    rawSubscribe: vi.fn(),
+    rawUnsubscribe: vi.fn(),
   },
+}))
+
+vi.mock('@workers/workerInstance', () => ({
+  getPipelineWorker: () => ({
+    postMessage: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }),
 }))
 
 function makeTicker(symbol: ParsedTicker['symbol'], lastPrice: number, change24h: number): ParsedTicker {

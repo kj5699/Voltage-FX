@@ -1,37 +1,44 @@
 import { useEffect, useRef } from 'react'
 import { SYMBOLS } from '@config/symbols'
 import { wsManager } from '@ws/index'
-import { parseTickerMessage } from '@pipelines/parsers'
-import { mergeLatestTickers } from '@pipelines/tickerPipeline'
 import { useStore } from '@store/store'
-import type { ParsedTicker } from '@pipelines/parsers'
+import { getPipelineWorker } from '@workers/workerInstance'
+import type { WorkerOutput } from '@workers/workerTypes'
 
 const FLUSH_MS = 200
 
 export function useTickerBar(): void {
-  const bufferRef = useRef<ParsedTicker[]>([])
+  const rawsRef = useRef<string[]>([])
 
   useEffect(() => {
-    const handler = (msg: unknown) => {
-      bufferRef.current.push(parseTickerMessage(msg as Record<string, unknown>))
-    }
+    const rawHandler = (raw: string) => { rawsRef.current.push(raw) }
 
     for (const symbol of SYMBOLS) {
-      wsManager.subscribe('v2/ticker', symbol, handler)
+      wsManager.rawSubscribe('v2/ticker', symbol, rawHandler)
     }
 
+    const worker = getPipelineWorker()
+
+    const onWorkerMessage = (event: MessageEvent<WorkerOutput>) => {
+      const msg = event.data
+      if (msg.type !== 'tickers') return
+      useStore.getState().updateTickers(msg.tickers)
+    }
+
+    worker.addEventListener('message', onWorkerMessage as EventListener)
+
     const intervalId = setInterval(() => {
-      const buffer = bufferRef.current
-      if (buffer.length === 0) return
-      bufferRef.current = []
-      const batch = mergeLatestTickers(buffer)
-      useStore.getState().updateTickers(batch)
+      const raws = rawsRef.current
+      if (raws.length === 0) return
+      rawsRef.current = []
+      worker.postMessage({ type: 'tickers', raws })
     }, FLUSH_MS)
 
     return () => {
       clearInterval(intervalId)
+      worker.removeEventListener('message', onWorkerMessage as EventListener)
       for (const symbol of SYMBOLS) {
-        wsManager.unsubscribe('v2/ticker', symbol)
+        wsManager.rawUnsubscribe('v2/ticker', symbol)
       }
     }
   }, [])

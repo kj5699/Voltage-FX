@@ -1,12 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { wsManager } from '@ws/index'
-import { parseOrderBookMessage } from '@pipelines/parsers'
-import { aggregateOrderBook } from '@pipelines/orderBookPipeline'
 import { buildSizeMap, detectFlashes } from '@utils/detectFlashes'
 import { useStore } from '@store/store'
 import { useFocusedSymbol } from '@store/index'
-import type { ParsedOrderBook } from '@pipelines/parsers'
+import { getPipelineWorker } from '@workers/workerInstance'
 import type { FlashResult } from '@utils/detectFlashes'
+import type { WorkerOutput } from '@workers/workerTypes'
 import type { Symbol } from '@config/symbols'
 
 const FLUSH_MS = 50
@@ -15,7 +14,7 @@ export function useOrderBookFlush(
   onFlash: (bids: FlashResult, asks: FlashResult) => void,
 ): void {
   const focusedSymbol = useFocusedSymbol()
-  const bufferRef = useRef<ParsedOrderBook | null>(null)
+  const rawRef = useRef<string | null>(null)
   const prevBidSizeMap = useRef<Map<number, number>>(new Map())
   const prevAskSizeMap = useRef<Map<number, number>>(new Map())
 
@@ -23,26 +22,25 @@ export function useOrderBookFlush(
     const capturedSeqId = useStore.getState().focusSeqId
     const symbol: Symbol = focusedSymbol
 
-    // Steps 5 — clear buffer before subscribing new symbol
-    bufferRef.current = null
+    // Step 5 — clear buffer before subscribing new symbol
+    rawRef.current = null
     prevBidSizeMap.current = new Map()
     prevAskSizeMap.current = new Map()
 
-    const handler = (msg: unknown) => {
-      bufferRef.current = parseOrderBookMessage(msg as Record<string, unknown>)
-    }
+    // Keep only latest snapshot — intermediate ones are discarded on slow CPUs
+    const rawHandler = (raw: string) => { rawRef.current = raw }
 
     // Step 9 — subscribe new symbol
-    wsManager.subscribe('l2_orderbook', symbol, handler)
+    wsManager.rawSubscribe('l2_orderbook', symbol, rawHandler)
 
-    const intervalId = setInterval(() => {
-      const parsed = bufferRef.current
-      if (!parsed) return
-      if (useStore.getState().focusSeqId !== capturedSeqId) return // stale guard
+    const worker = getPipelineWorker()
 
-      const t0 = performance.now()
-      const increment = useStore.getState().groupingIncrement
-      const result = aggregateOrderBook(parsed.bids, parsed.asks, increment, symbol)
+    const onWorkerMessage = (event: MessageEvent<WorkerOutput>) => {
+      const msg = event.data
+      if (msg.type !== 'ob') return
+      if (msg.seqId !== capturedSeqId) return // stale guard
+
+      const result = msg.orderBook
 
       const bidFlashes = detectFlashes(prevBidSizeMap.current, buildSizeMap(result.bids))
       const askFlashes = detectFlashes(prevAskSizeMap.current, buildSizeMap(result.asks))
@@ -55,17 +53,24 @@ export function useOrderBookFlush(
       if (bidFlashes.size > 0 || askFlashes.size > 0) {
         onFlash(bidFlashes, askFlashes)
       }
+    }
 
-      if (import.meta.env.DEV) {
-        const elapsed = performance.now() - t0
-        if (elapsed > 2) console.warn(`[OB flush] ${elapsed.toFixed(2)}ms — budget 2ms`)
-      }
+    worker.addEventListener('message', onWorkerMessage as EventListener)
+
+    const intervalId = setInterval(() => {
+      const raw = rawRef.current
+      if (!raw) return
+      if (useStore.getState().focusSeqId !== capturedSeqId) return // stale guard
+
+      const increment = useStore.getState().groupingIncrement
+      worker.postMessage({ type: 'ob', seqId: capturedSeqId, symbol, increment, raw })
     }, FLUSH_MS)
 
     return () => {
       clearInterval(intervalId)
+      worker.removeEventListener('message', onWorkerMessage as EventListener)
       // Step 2 — unsubscribe old symbol
-      wsManager.unsubscribe('l2_orderbook', symbol)
+      wsManager.rawUnsubscribe('l2_orderbook', symbol)
     }
   }, [focusedSymbol, onFlash]) // re-runs on symbol change
 }

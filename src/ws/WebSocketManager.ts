@@ -1,5 +1,6 @@
 export type WsStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 export type MessageHandler = (msg: unknown) => void
+export type RawHandler = (raw: string) => void
 
 const BACKOFF_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000] as const
 const PING_INTERVAL_MS = 30_000
@@ -9,6 +10,7 @@ export class WebSocketManager {
   private ws: WebSocket | null = null
   private url = ''
   private registry = new Map<string, MessageHandler>()
+  private rawRegistry = new Map<string, RawHandler>()
   private backoffIndex = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private pingTimer: ReturnType<typeof setInterval> | null = null
@@ -57,6 +59,22 @@ export class WebSocketManager {
     }
   }
 
+  rawSubscribe(channel: string, symbol: string, handler: RawHandler): void {
+    const key = `${channel}:${symbol}`
+    this.rawRegistry.set(key, handler)
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.sendFrame('subscribe', channel, symbol)
+    }
+  }
+
+  rawUnsubscribe(channel: string, symbol: string): void {
+    const key = `${channel}:${symbol}`
+    this.rawRegistry.delete(key)
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.sendFrame('unsubscribe', channel, symbol)
+    }
+  }
+
   private openSocket(): void {
     this.onStatusChange('connecting')
     const ws = new WebSocket(this.url)
@@ -67,6 +85,10 @@ export class WebSocketManager {
       this.clearReconnectTimer()
       this.onStatusChange('connected')
       for (const key of this.registry.keys()) {
+        const [channel, symbol] = key.split(':') as [string, string]
+        this.sendFrame('subscribe', channel, symbol)
+      }
+      for (const key of this.rawRegistry.keys()) {
         const [channel, symbol] = key.split(':') as [string, string]
         this.sendFrame('subscribe', channel, symbol)
       }
@@ -94,8 +116,11 @@ export class WebSocketManager {
       const type = record['type']
       const symbol = record['symbol']
       if (typeof type !== 'string' || typeof symbol !== 'string') return
-      const handler = this.registry.get(`${type}:${symbol}`)
+      const key = `${type}:${symbol}`
+      const handler = this.registry.get(key)
       handler?.(msg)
+      const rawHandler = this.rawRegistry.get(key)
+      rawHandler?.(event.data as string)
     }
   }
 

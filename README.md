@@ -122,8 +122,7 @@ src/
 ## Running Tests
 
 ```bash
-npm test              # Vitest unit + integration tests
-npm run test:e2e      # Playwright E2E (requires backend running)
+npm test              # Vitest unit + integration tests (131 tests)
 npm run coverage      # Coverage report (target: ≥80% overall, ≥95% pipelines)
 ```
 

@@ -41,3 +41,7 @@ export function useFocusSeqId(): number {
 export function useSetFocusedSymbol(): (s: Symbol) => void {
   return useStore((s) => s.setFocusedSymbol)
 }
+
+export function useIsSymbolFocused(symbol: Symbol): boolean {
+  return useStore((s) => s.focusedSymbol === symbol)
+}

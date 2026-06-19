@@ -10,4 +10,5 @@ export {
   useRollingStats,
   useFocusSeqId,
   useSetFocusedSymbol,
+  useIsSymbolFocused,
 } from './hooks'

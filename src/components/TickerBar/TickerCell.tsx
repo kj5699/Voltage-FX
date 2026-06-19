@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { useTicker, useSetFocusedSymbol, useFocusedSymbol } from '@store/index'
+import { useTicker, useSetFocusedSymbol, useIsSymbolFocused } from '@store/index'
 import { SYMBOL_CONFIG } from '@config/symbols'
 import type { Symbol } from '@config/symbols'
 
@@ -9,9 +9,8 @@ interface TickerCellProps {
 
 export const TickerCell = memo(function TickerCell({ symbol }: TickerCellProps) {
   const ticker = useTicker(symbol)
-  const focusedSymbol = useFocusedSymbol()
+  const isFocused = useIsSymbolFocused(symbol)
   const setFocusedSymbol = useSetFocusedSymbol()
-  const isFocused = focusedSymbol === symbol
   const precision = SYMBOL_CONFIG[symbol].precision
 
   const priceStr = ticker ? ticker.lastPrice.toFixed(precision) : '—'

@@ -16,6 +16,7 @@ export function OrderBookPanel() {
   const precision = SYMBOL_CONFIG[focusedSymbol].precision
 
   const rowRefs = useRef(new Map<number, HTMLTableRowElement | null>())
+  const rowRefCallbacks = useRef(new Map<number, (el: HTMLTableRowElement | null) => void>())
   const flashTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
 
   const applyFlashes = useCallback((
@@ -44,8 +45,13 @@ export function OrderBookPanel() {
 
   useOrderBookFlush(applyFlashes)
 
-  const makeRowRef = (price: number) => (el: HTMLTableRowElement | null) => {
-    rowRefs.current.set(price, el)
+  function getRowRef(price: number): (el: HTMLTableRowElement | null) => void {
+    let cb = rowRefCallbacks.current.get(price)
+    if (!cb) {
+      cb = (el) => { rowRefs.current.set(price, el) }
+      rowRefCallbacks.current.set(price, cb)
+    }
+    return cb
   }
 
   if (!orderBook) {
@@ -89,7 +95,7 @@ export function OrderBookPanel() {
               level={level}
               side="ask"
               precision={precision}
-              rowRef={makeRowRef(level.price)}
+              rowRef={getRowRef(level.price)}
             />
           ))}
         </tbody>
@@ -112,7 +118,7 @@ export function OrderBookPanel() {
               level={level}
               side="bid"
               precision={precision}
-              rowRef={makeRowRef(level.price)}
+              rowRef={getRowRef(level.price)}
             />
           ))}
         </tbody>

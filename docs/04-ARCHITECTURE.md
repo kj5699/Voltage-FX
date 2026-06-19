@@ -448,11 +448,11 @@ and rendering bypasses React's virtual DOM for high-frequency panels.
 
 > Full analysis in `docs/06-OPTIMIZATION-PLAN.md`. This section captures the architectural decision.
 
-### What the current architecture leaves on the main thread
+### What the Worker solves (implemented)
 
 The buffer-flush pattern (50/100/200ms intervals) decouples message rate from render rate — React sees at most 20 `setState` calls/second regardless of WebSocket throughput. That problem is solved.
 
-What is **not** solved: at stress rates (orderbook at 10–20ms = 50–100 snapshots/s), `JSON.parse` of 500-level snapshots (~50KB each) consumes **200–300ms/s** of main thread time — up to 30% of total budget, before React even runs.
+At stress rates (orderbook at 10–20ms = 50–100 snapshots/s), `JSON.parse` of 500-level snapshots (~50KB each) would consume **200–300ms/s** of main thread time. This is solved: all pipelines (JSON.parse + aggregation for orderbook, trades, and tickers) run in `pipelineWorker.ts`. The main thread only receives compact processed results and writes to the store.
 
 ### Chosen mitigation: Worker for orderbook aggregation only
 

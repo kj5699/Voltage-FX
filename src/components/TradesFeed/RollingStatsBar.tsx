@@ -1,18 +1,22 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { useRollingStats } from '@store/index'
 import type { RollingStats } from '@pipelines/rollingStatsPipeline'
 
 export const RollingStatsBar = memo(function RollingStatsBar() {
   const liveStats = useRollingStats()
+  const liveRef = useRef(liveStats)
   const [displayStats, setDisplayStats] = useState<RollingStats | null>(null)
+
+  // Keep ref in sync on every render without re-triggering the interval
+  liveRef.current = liveStats
 
   // Update display at 1s cadence — not on every 100ms flush
   useEffect(() => {
     const id = setInterval(() => {
-      setDisplayStats(useRollingStats === null ? null : liveStats)
+      setDisplayStats(liveRef.current)
     }, 1000)
     return () => clearInterval(id)
-  }, [liveStats])
+  }, [])
 
   const fmt = (n: number) => n.toFixed(2)
   const s = displayStats

@@ -3,8 +3,12 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
+  define: {
+    // Ensures react-dom picks the dev build in dev mode (enables React DevTools Profiler)
+    'process.env.NODE_ENV': JSON.stringify(mode),
+  },
   resolve: {
     alias: {
       '@ws': resolve(__dirname, 'src/ws'),
@@ -17,4 +21,4 @@ export default defineConfig({
       '@workers': resolve(__dirname, 'src/workers'),
     },
   },
-})
+}))

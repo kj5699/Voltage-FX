@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, act } from '@testing-library/react'
 import { VirtualTradeList } from '../VirtualTradeList'
 import { TradesFeedPanel } from '../TradesFeedPanel'
 import { useStore } from '@store/store'
+import { SYMBOL_CONFIG } from '@config/symbols'
 import type { AggregatedTrade } from '@pipelines/tradePipeline'
 
 vi.mock('@ws/index', () => ({
@@ -94,10 +95,31 @@ describe('T5-15: large trade class', () => {
 
 // T5-18: Threshold change
 describe('T5-18: large trade threshold input', () => {
-  it('renders threshold input with default value', () => {
+  it('renders threshold input with BTCUSD default value', () => {
     render(<TradesFeedPanel />)
     const input = screen.getByRole('spinbutton') as HTMLInputElement
-    expect(input.defaultValue).toBe('10000')
+    expect(input.defaultValue).toBe(String(SYMBOL_CONFIG['BTCUSD'].largeTradeThreshold))
+  })
+
+  it('resets threshold to new symbol default when focused symbol changes', () => {
+    render(<TradesFeedPanel />)
+    const inputBefore = screen.getByRole('spinbutton') as HTMLInputElement
+    expect(inputBefore.defaultValue).toBe(String(SYMBOL_CONFIG['BTCUSD'].largeTradeThreshold))
+
+    // Switch to DOGEUSD — wrap in act() to flush re-render
+    act(() => {
+      useStore.setState({ focusedSymbol: 'DOGEUSD', focusSeqId: 1, orderBook: null, trades: [], rollingStats: null })
+    })
+
+    const inputAfter = screen.getByRole('spinbutton') as HTMLInputElement
+    expect(inputAfter.defaultValue).toBe(String(SYMBOL_CONFIG['DOGEUSD'].largeTradeThreshold))
+  })
+
+  it('each symbol has a distinct largeTradeThreshold in SYMBOL_CONFIG', () => {
+    // Verify thresholds are calibrated (not all the same, no zeros)
+    const thresholds = Object.values(SYMBOL_CONFIG).map(c => c.largeTradeThreshold)
+    expect(new Set(thresholds).size).toBeGreaterThan(1)
+    thresholds.forEach(t => expect(t).toBeGreaterThan(0))
   })
 })
 

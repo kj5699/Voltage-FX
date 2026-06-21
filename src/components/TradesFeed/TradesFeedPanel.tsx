@@ -1,27 +1,39 @@
-import { useState, useCallback, useRef } from 'react'
-import { useTrades } from '@store/index'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { useTrades, useFocusedSymbol } from '@store/index'
+import { useStore } from '@store/store'
 import { useTradesFlush } from '@hooks/useTradesFlush'
+import { SYMBOL_CONFIG } from '@config/symbols'
 import { VirtualTradeList } from './VirtualTradeList'
 import { RollingStatsBar } from './RollingStatsBar'
 
-const DEFAULT_THRESHOLD = 10_000
 const DEBOUNCE_MS = 300
 const LIST_HEIGHT = 400
 
 export function TradesFeedPanel() {
   const trades = useTrades()
-  const [notionalThreshold, setNotionalThreshold] = useState(DEFAULT_THRESHOLD)
+  const focusedSymbol = useFocusedSymbol()
+  const [notionalThreshold, setNotionalThreshold] = useState(
+    () => SYMBOL_CONFIG[useStore.getState().focusedSymbol].largeTradeThreshold
+  )
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useTradesFlush(notionalThreshold)
+
+  // Reset threshold to symbol default when focused symbol changes
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setNotionalThreshold(SYMBOL_CONFIG[focusedSymbol].largeTradeThreshold)
+  }, [focusedSymbol])
+
+  const defaultThreshold = SYMBOL_CONFIG[focusedSymbol].largeTradeThreshold
 
   const handleThresholdChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = Number(e.target.value)
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      setNotionalThreshold(value > 0 ? value : DEFAULT_THRESHOLD)
+      setNotionalThreshold(value > 0 ? value : defaultThreshold)
     }, DEBOUNCE_MS)
-  }, [])
+  }, [defaultThreshold])
 
   return (
     <div className="trades-panel">
@@ -32,10 +44,11 @@ export function TradesFeedPanel() {
             Large ≥ $
           </label>
           <input
+            key={focusedSymbol}
             id="notional-threshold"
             type="number"
             className="trades-panel__threshold-input"
-            defaultValue={DEFAULT_THRESHOLD}
+            defaultValue={defaultThreshold}
             min={0}
             onChange={handleThresholdChange}
           />

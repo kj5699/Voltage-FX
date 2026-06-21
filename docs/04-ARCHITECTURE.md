@@ -68,33 +68,51 @@ WebSocket Frame arrives
         │
         ▼
 WebSocketManager.onmessage()
-  │  Parses JSON
-  │  Looks up handler by { channel, symbol }
+  │  Routes by msg.type ('l2_orderbook' | 'all_trades' | 'v2/ticker')
   │  Calls registered handler
         │
-        ├─── v2/ticker  ──────► tickerBuffer.current[symbol].push(msg)
+        ├─── v2/ticker  ──────► tickerBuffer.current[symbol].push(rawString)
         │                                   (useRef — no render triggered)
         │
-        ├─── l2_orderbook ────► orderBookBuffer.current.push(msg)
+        ├─── l2_orderbook ────► orderBookBuffer.current.push(rawString)
         │
-        └─── all_trades  ────► tradesBuffer.current.push(msg)
+        └─── all_trades  ────► tradesBuffer.current.push(rawString)
 
 
 setInterval(50 ms) — ORDER BOOK FLUSH:
   ├── Take latest snapshot from orderBookBuffer
-  ├── Run aggregation pipeline (grouping, cumulative sums, depth bars, metrics)
-  └── zustand.setState({ orderBook: processed })   ← 1 render for OrderBook panel
+  ├── pipelineWorker.postMessage({ type:'ob', raw, increment, symbol, seqId })
+  │       ↓  Worker thread (pipelineWorker.ts):
+  │       │  JSON.parse(raw)
+  │       │  parseOrderBookMessage()
+  │       └─ aggregateOrderBook() → ProcessedOrderBook
+  │       ↑  worker.onmessage({ type:'ob', orderBook })
+  └── zustand.setState({ orderBook })          ← 1 render for OrderBook panel
 
 setInterval(100 ms) — TRADES FLUSH:
-  ├── Take all accumulated trades
-  ├── Merge within 100 ms windows at same price
-  ├── Update rolling 60 s window (deque eviction)
-  └── zustand.setState({ trades: merged, rollingStats })   ← 1 render for TradesFeed
+  ├── Take all accumulated rawStrings from tradesBuffer
+  ├── pipelineWorker.postMessage({ type:'trades', raws, notionalThreshold, seqId, nowMs })
+  │       ↓  Worker thread:
+  │       │  raws.map(r => parseTradeMessage(JSON.parse(r)))
+  │       │  aggregateTrades()  — 100 ms bucket merge, isLarge flag
+  │       │  updateRollingDeque() + computeRollingStats()
+  │       └─ → { trades, rollingStats }
+  │       ↑  worker.onmessage({ type:'trades', trades, rollingStats })
+  └── zustand.setState({ trades, rollingStats })   ← 1 render for TradesFeed
 
 setInterval(200 ms) — TICKER FLUSH:
-  ├── Take latest value per symbol
-  └── zustand.setState({ tickers: { ...tickers, ...latest } })  ← renders only changed TickerCells
+  ├── Take latest rawString per symbol from tickerBuffer
+  ├── pipelineWorker.postMessage({ type:'tickers', raws })
+  │       ↓  Worker thread:
+  │       │  raws.map(r => parseTickerMessage(JSON.parse(r)))
+  │       └─ mergeLatestTickers() → Partial<Record<Symbol, ParsedTicker>>
+  │       ↑  worker.onmessage({ type:'tickers', tickers })
+  └── zustand.setState({ tickers: { ...prev, ...tickers } })  ← renders only changed TickerCells
 ```
+
+**Main-thread cost per flush:** The main thread only pushes raw strings into `useRef` buffers,
+calls `worker.postMessage()`, and receives the compact processed result to write to the store.
+JSON.parse, all pipeline CPU, and rolling-stats computation run entirely off the main thread.
 
 ---
 
@@ -102,28 +120,35 @@ setInterval(200 ms) — TICKER FLUSH:
 
 ```
 <App>
-  ├── <ConnectionStatus>          reads wsStatus slice
+  ├── <ConnectionStatus>          selector: wsStatus (memo-wrapped)
+  ├── <BackendControl>            no store subscriptions — local state only
   ├── <TickerBar>
-  │    ├── <TickerCell symbol="BTCUSD">   selector: tickers['BTCUSD']
-  │    ├── <TickerCell symbol="ETHUSD">   selector: tickers['ETHUSD']
+  │    ├── <TickerCell symbol="BTCUSD">   selector: tickers['BTCUSD']  +  useIsSymbolFocused('BTCUSD')
+  │    ├── <TickerCell symbol="ETHUSD">   selector: tickers['ETHUSD']  +  useIsSymbolFocused('ETHUSD')
   │    └── ... (×6)
   │
-  └── <MainLayout>
-       ├── <OrderBookPanel>        selector: orderBook
-       │    ├── <GroupingSelector>
-       │    ├── <AskTable>
-       │    ├── <SpreadBar>
-       │    └── <BidTable>
+  └── app__panels
+       ├── <OrderBookPanel>        selector: orderBook  (also reads focusedSymbol for precision)
+       │    ├── <GroupingSelector>  selector: groupingIncrement
+       │    ├── <OrderBookRow>      React.memo — re-renders only when its level changes
+       │    └── <SpreadBar>         React.memo
        │
-       └── <TradesFeedPanel>       selector: trades + rollingStats
-            ├── <RollingStatsBar>
-            ├── <VirtualTradeList>  (react-window FixedSizeList)
+       └── <TradesFeedPanel>       selector: trades  +  useFocusedSymbol (for threshold reset)
+            ├── <RollingStatsBar>   selector: rollingStats; 1s setInterval reads via useRef
+            ├── <VirtualTradeList>  react-window FixedSizeList (~15 DOM nodes always)
             └── <JumpToLatestButton>
 ```
 
 **Render isolation guarantee:** Each component subscribes to a distinct Zustand selector.
 Zustand's equality check (`Object.is`) ensures a re-render fires only when that slice
 reference changes. Cross-panel renders are structurally impossible.
+
+**TickerCell isolation refinement:** Each `TickerCell` subscribes to two boolean-returning
+selectors — `tickers[symbol]` (data) and `useIsSymbolFocused(symbol)` (focus highlight).
+Both return scalars or stable object references, so a focus switch only re-renders the two
+cells whose `isFocused` boolean changed (old + new), not all six.
+
+**React DevTools Profiler:** Enabled in dev mode via `define: { 'process.env.NODE_ENV': JSON.stringify(mode) }` in `vite.config.ts`, which ensures Vite's pre-bundler resolves the `react-dom` branch to the development build at runtime.
 
 ---
 
@@ -304,15 +329,27 @@ Precision values sourced directly from backend `config.js` — must match exactl
 math produces wrong bucket boundaries.
 
 ```typescript
-const SYMBOL_CONFIG: Record<Symbol, { precision: number; increments: number[] }> = {
-  BTCUSD:  { precision: 1, increments: [1, 5, 10, 50, 100, 500] },
-  ETHUSD:  { precision: 2, increments: [0.5, 1, 5, 10, 50] },
-  XRPUSD:  { precision: 4, increments: [0.0001, 0.001, 0.01, 0.1] },
-  SOLUSD:  { precision: 4, increments: [0.001, 0.005, 0.01, 0.05, 0.1] },  // 4dp per backend
-  PAXGUSD: { precision: 2, increments: [0.5, 1, 5, 10, 50] },
-  DOGEUSD: { precision: 6, increments: [0.000001, 0.00001, 0.0001, 0.001] }, // 6dp per backend
+const SYMBOL_CONFIG: Record<Symbol, {
+  precision: number
+  increments: number[]
+  largeTradeThreshold: number   // ← notional (price × size) above which a trade is "large"
+}> = {
+  //                                                          largeTradeThreshold calibrated to
+  //                                                          ~50% of midpoint notional so ~half
+  //                                                          of trades qualify (backend size ≈ 100)
+  BTCUSD:  { precision: 1, increments: [0.5,1,2,5,10,25,50,100],                  largeTradeThreshold: 3_000_000 },
+  ETHUSD:  { precision: 2, increments: [0.05,0.1,0.5,1,2,5,10],                   largeTradeThreshold: 100_000   },
+  XRPUSD:  { precision: 4, increments: [0.0001,0.0005,0.001,0.005,0.01],          largeTradeThreshold: 100       },
+  SOLUSD:  { precision: 4, increments: [0.0001,0.0005,0.001,0.005,0.01],          largeTradeThreshold: 4_000     },
+  PAXGUSD: { precision: 2, increments: [0.05,0.1,0.5,1,2,5,10],                   largeTradeThreshold: 250_000   },
+  DOGEUSD: { precision: 6, increments: [0.000001,0.000005,0.00001,0.00005,0.0001],largeTradeThreshold: 2         },
 }
 ```
+
+**`largeTradeThreshold` reset rule:** When `focusedSymbol` changes, `TradesFeedPanel` resets
+`notionalThreshold` state to `SYMBOL_CONFIG[newSymbol].largeTradeThreshold` via
+`useEffect([focusedSymbol])`. The threshold `<input>` carries `key={focusedSymbol}` so React
+remounts it (resetting the displayed value) without switching to a controlled input.
 
 **Grouping increment reset rule:** When `focusedSymbol` changes, `groupingIncrement` resets
 to `SYMBOL_CONFIG[newSymbol].increments[0]` (the finest increment). This happens atomically
@@ -327,15 +364,18 @@ in the store. The next 50 ms flush re-runs the aggregation with the new incremen
 
 ## 9. Performance Budget
 
-| Operation | Frequency | Budget | Technique |
-|-----------|-----------|--------|-----------|
-| WS message ingestion | 1–200+ /s | < 0.1 ms | Push to `useRef` array only |
-| Ticker flush | 5 /s | < 2 ms | Latest-value-per-symbol merge |
-| Order book aggregation | 20 /s | < 2 ms | Integer arithmetic, Map, sort |
-| Trade aggregation + rolling stats | 10 /s | < 3 ms | Deque eviction, bucket merge |
-| React render (per panel) | max 20 /s | < 5 ms | Zustand selector, react-window |
-| Flash detection | 20 /s | < 0.5 ms | Previous-size Map lookup |
-| **Total main-thread budget** | — | **< 13 ms / 50 ms frame** | — |
+| Operation | Thread | Frequency | Budget | Technique |
+|-----------|--------|-----------|--------|-----------|
+| WS message ingestion | Main | 1–200+ /s | < 0.1 ms | Push raw string to `useRef` array |
+| OB JSON.parse + aggregation | **Worker** | 20 /s | < 2 ms (off main thread) | Integer arithmetic, Map, sort |
+| Trade parse + aggregate + rolling stats | **Worker** | 10 /s | < 3 ms (off main thread) | Deque eviction, bucket merge |
+| Ticker parse + merge | **Worker** | 5 /s | < 1 ms (off main thread) | Latest-value-per-symbol merge |
+| `postMessage` (main→worker) | Main | 20 /s | < 0.1 ms | Raw strings (no clone cost) |
+| `postMessage` (worker→main) | Main | 20 /s | < 0.1 ms | Compact processed results |
+| Zustand store write | Main | 20 /s | < 0.2 ms | Single `setState` per flush |
+| React render (per panel) | Main | max 20 /s | < 5 ms | Atomic selector, react-window |
+| Flash detection | Main | 20 /s | < 0.5 ms | Previous-size Map lookup, DOM class |
+| **Total main-thread budget** | — | — | **< 6 ms / 50 ms frame** | Worker offloads all pipeline CPU |
 
 ---
 
@@ -345,44 +385,55 @@ in the store. The next 50 ms flush re-runs the aggregation with the new incremen
 src/
 ├── ws/
 │   ├── WebSocketManager.ts     singleton connection manager
-│   └── types.ts                WS message types
+│   └── index.ts                singleton export (wsManager)
 │
 ├── store/
-│   ├── appStore.ts             Zustand store definition
-│   └── selectors.ts            typed selector hooks
+│   ├── store.ts                Zustand store definition + actions
+│   ├── hooks.ts                typed selector hooks (one per component type)
+│   └── index.ts                re-exports
 │
 ├── pipelines/
-│   ├── orderBookPipeline.ts    aggregation + metrics
-│   ├── tradePipeline.ts        window merge + rolling stats
+│   ├── parsers.ts              WS message → typed domain objects
+│   ├── orderBookPipeline.ts    aggregation + metrics + flash detection
+│   ├── tradePipeline.ts        window merge + isLarge flag
+│   ├── rollingStatsPipeline.ts deque eviction + stats computation
 │   └── tickerPipeline.ts       latest-value merge
 │
+├── workers/
+│   ├── pipelineWorker.ts       DedicatedWorker — runs all 3 pipelines off main thread
+│   ├── workerInstance.ts       singleton Worker export
+│   └── workerTypes.ts          WorkerInput / WorkerOutput discriminated unions
+│
 ├── hooks/
-│   ├── useWebSocket.ts         mounts/unmounts WS subscriptions
-│   ├── useOrderBook.ts         buffer flush + pipeline trigger
-│   └── useTrades.ts            buffer flush + pipeline trigger
+│   ├── useWebSocket.ts         mounts WS subscriptions, runs focus-switch sequence
+│   ├── useOrderBookFlush.ts    50 ms flush → pipelineWorker (ob)
+│   ├── useTradesFlush.ts       100 ms flush → pipelineWorker (trades)
+│   └── useTickerBar.ts         200 ms flush → pipelineWorker (tickers)
 │
 ├── components/
 │   ├── TickerBar/
-│   │   ├── TickerBar.tsx
-│   │   └── TickerCell.tsx
+│   │   ├── TickerBar.tsx        no store subscriptions — renders 6 TickerCell children
+│   │   └── TickerCell.tsx       selector: tickers[symbol] + useIsSymbolFocused(symbol)
 │   ├── OrderBook/
-│   │   ├── OrderBookPanel.tsx
-│   │   ├── AskTable.tsx
-│   │   ├── BidTable.tsx
-│   │   ├── SpreadBar.tsx
-│   │   └── GroupingSelector.tsx
-│   └── TradesFeed/
-│       ├── TradesFeedPanel.tsx
-│       ├── RollingStatsBar.tsx
-│       ├── VirtualTradeList.tsx
-│       └── JumpToLatestButton.tsx
+│   │   ├── OrderBookPanel.tsx   selector: orderBook; stable rowRef callbacks via Map cache
+│   │   ├── OrderBookRow.tsx     React.memo — re-renders only when its level changes
+│   │   ├── SpreadBar.tsx        React.memo
+│   │   └── GroupingSelector.tsx selector: groupingIncrement
+│   ├── TradesFeed/
+│   │   ├── TradesFeedPanel.tsx  selector: trades + focusedSymbol; resets threshold on switch
+│   │   ├── RollingStatsBar.tsx  selector: rollingStats; useRef + 1s setInterval display gate
+│   │   ├── VirtualTradeList.tsx react-window FixedSizeList (~15 DOM nodes)
+│   │   └── JumpToLatestButton.tsx
+│   ├── ConnectionStatus/
+│   │   └── ConnectionStatus.tsx selector: wsStatus (memo-wrapped)
+│   └── BackendControl/
+│       └── BackendControl.tsx   no store subscriptions; HTTP control panel for backend rate
 │
 ├── config/
-│   └── symbols.ts              SYMBOL_CONFIG table
+│   └── symbols.ts              SYMBOL_CONFIG: precision + increments + largeTradeThreshold
 │
 └── utils/
-    ├── precision.ts            scale/unscale helpers
-    └── time.ts                 formatTime, bucket helpers
+    └── detectFlashes.ts        prev/curr size Map comparison → flash direction map
 ```
 
 ---
@@ -444,51 +495,70 @@ and rendering bypasses React's virtual DOM for high-frequency panels.
 
 ---
 
-## 13. Web Worker Optimization Strategy (Production Path)
+## 13. Web Worker Pipeline (Implemented)
 
-> Full analysis in `docs/06-OPTIMIZATION-PLAN.md`. This section captures the architectural decision.
+All three pipelines — orderbook, trades, tickers — run in `src/workers/pipelineWorker.ts`
+(a `DedicatedWorkerGlobalScope`). The main thread only pushes raw JSON strings into `useRef`
+buffers, sends them to the Worker on each flush tick, and writes the compact processed result
+to the Zustand store.
 
-### What the Worker solves (implemented)
+### Message protocol
 
-The buffer-flush pattern (50/100/200ms intervals) decouples message rate from render rate — React sees at most 20 `setState` calls/second regardless of WebSocket throughput. That problem is solved.
+```typescript
+// Main → Worker
+type WorkerInput =
+  | { type: 'ob';     seqId: number; symbol: Symbol; increment: number; raw: string }
+  | { type: 'trades'; seqId: number; notionalThreshold: number; nowMs: number; raws: string[] }
+  | { type: 'tickers'; raws: string[] }
 
-At stress rates (orderbook at 10–20ms = 50–100 snapshots/s), `JSON.parse` of 500-level snapshots (~50KB each) would consume **200–300ms/s** of main thread time. This is solved: all pipelines (JSON.parse + aggregation for orderbook, trades, and tickers) run in `pipelineWorker.ts`. The main thread only receives compact processed results and writes to the store.
-
-### Chosen mitigation: Worker for orderbook aggregation only
-
-Move the most expensive operation — orderbook parse + aggregate — to a dedicated Worker. Keep the WebSocket on the main thread (small trade messages don't justify the Worker overhead).
-
-```
-Main thread:
-  WS.onmessage → JSON.parse(raw)
-    → worker.postMessage(ParsedOrderBook)   // 500 levels, raw
-
-Worker thread:
-  aggregateOrderBook(bids, asks, increment, symbol)
-  // sort, prefix-sum, depth bars — all CPU-bound
-    → postMessage(ProcessedOrderBook)        // 20–50 grouped levels
-
-Main thread:
-  store.setOrderBook(result)
-  React renders OrderBookPanel
+// Worker → Main
+type WorkerOutput =
+  | { type: 'ob';     seqId: number; orderBook: ProcessedOrderBook }
+  | { type: 'trades'; seqId: number; trades: AggregatedTrade[]; rollingStats: RollingStats }
+  | { type: 'tickers'; tickers: Partial<Record<Symbol, ParsedTicker>> }
 ```
 
-### Why this split
+### What runs where
 
-Structured clone cost is proportional to object size. The raw snapshot (500 levels × 2 sides) is large. The processed result (20–50 grouped levels after aggregation) is 10–25× smaller. Always pay the clone cost on the smaller object — so the Worker returns the result, not the input.
+| Operation | Thread | Notes |
+|-----------|--------|-------|
+| WebSocketManager + heartbeat | Main | Requires DOM / store access |
+| `useRef` buffer push (raw strings) | Main | Zero-cost — no parse, no render |
+| `postMessage` to Worker | Main | Transfers raw strings (small clone cost) |
+| JSON.parse for all 3 channels | **Worker** | Largest single CPU cost removed from main |
+| `parseOrderBookMessage` + `aggregateOrderBook` | **Worker** | Integer math, sort, prefix-sum, depth bars |
+| `parseTradeMessage` + `aggregateTrades` + rolling stats | **Worker** | Deque eviction, bucket merge, isLarge flag |
+| `parseTickerMessage` + `mergeLatestTickers` | **Worker** | Latest-value-per-symbol merge |
+| Zustand store writes | Main | Workers cannot access the DOM or Zustand |
+| React reconciler + render | Main | DOM — always main thread |
 
-Trade messages (200 bytes each) don't justify a Worker round-trip. The `postMessage` overhead would exceed the parse cost.
+### stale-snapshot guard in the Worker
 
-### What stays on the main thread permanently
+The Worker holds its own `existingTrades` array and `rollingDeque` for the trades pipeline.
+When `seqId` changes (symbol switch detected), the Worker clears both immediately:
 
-| Layer | Reason |
-|-------|--------|
-| WebSocketManager | Reconnect + heartbeat coordination requires store access |
-| Trade parse + aggregate | Tiny payloads — Worker overhead > benefit |
-| Ticker parse + merge | Same — 200ms flush, negligible CPU |
-| Zustand store writes | Workers have no DOM/store access |
-| React render | DOM only — always main thread |
+```typescript
+if (seqId !== lastSeqId) {
+  existingTrades = []
+  rollingDeque = []
+  lastSeqId = seqId
+}
+```
 
-### Implementation: Issue 20
+This mirrors the focus-switch `focusSeqId` guard on the main thread — any in-flight Worker
+result carrying the old `seqId` is discarded by the flush handler before writing to the store.
 
-See `issues/20-orderbook-worker.md`. Not implemented in the current version — the buffer-flush architecture handles the assignment's evaluation criteria. This is the documented next step for production load.
+### Structured-clone cost rationale
+
+The raw orderbook snapshot (500 price levels × 2 sides as a JSON string) is passed to the
+Worker once per flush as a plain `string`. Strings transfer cheaply. The Worker returns the
+aggregated result (15–50 grouped levels as a compact object) — 10–25× smaller than the raw
+input. Always pay the structured-clone cost on the smaller, already-aggregated value.
+
+### 50-symbol scaling path
+
+At 50 symbols × 3 channels = 150 concurrent streams, the Worker model composes naturally:
+the same `pipelineWorker.ts` handles all symbols in sequence within each flush tick.
+The main thread cost remains bounded regardless of symbol count. For extreme throughput
+(50 × 100 snapshots/s), the next step is a `SharedArrayBuffer` ring buffer to eliminate
+`postMessage` round-trips entirely — see §12 for the full scaling analysis.
